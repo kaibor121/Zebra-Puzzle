@@ -3,6 +3,13 @@ import { Puzzle, Constraint } from './puzzles';
 export type Assignment = Record<string, number>; // variable -> house index
 export type Domains = Record<string, Set<number>>; // variable -> set of possible house indices
 
+export type SolverOptions = {
+  forwardChecking: boolean;
+  mrv: boolean;
+  degree: boolean;
+  lcv: boolean;
+};
+
 export type Step = {
   type: 'ASSIGN' | 'BACKTRACK' | 'FORWARD_CHECK' | 'DOMAIN_REDUCE' | 'SUCCESS' | 'FAIL';
   variable?: string;
@@ -131,9 +138,13 @@ export class CSPSolver {
 
   // Heuristic: Minimum Remaining Values (MRV)
   // Select the unassigned variable with the smallest domain
-  selectUnassignedVariable(assignment: Assignment, domains: Domains): string {
+  selectUnassignedVariable(assignment: Assignment, domains: Domains, options: SolverOptions): string {
     const unassigned = this.variables.filter(v => !(v in assignment));
     
+    if (!options.mrv) {
+      return unassigned[0]; // Standard backtracking: pick first unassigned
+    }
+
     // Calculate degree (number of constraints involving the variable)
     const getDegree = (v: string) => {
       return this.constraints.filter(c => 
@@ -150,15 +161,22 @@ export class CSPSolver {
       if (currentSize > bestSize) return best;
       
       // Tie-breaker: Degree Heuristic (choose variable involved in most constraints)
-      return getDegree(current) > getDegree(best) ? current : best;
+      if (options.degree) {
+        return getDegree(current) > getDegree(best) ? current : best;
+      }
+      return best;
     });
   }
 
   // Heuristic: Least Constraining Value (LCV)
   // Order values by how many options they leave for other variables
-  orderDomainValues(variable: string, assignment: Assignment, domains: Domains): number[] {
+  orderDomainValues(variable: string, assignment: Assignment, domains: Domains, options: SolverOptions): number[] {
     const values = Array.from(domains[variable]);
     
+    if (!options.lcv) {
+      return values; // Standard backtracking: default order
+    }
+
     return values.sort((valA, valB) => {
       // Count how many values would be removed from other domains if we choose valA
       const countRemoved = (val: number) => {
@@ -186,7 +204,7 @@ export class CSPSolver {
     return snap;
   }
 
-  solve(): Step[] {
+  solve(options: SolverOptions = { forwardChecking: true, mrv: true, degree: true, lcv: true }): Step[] {
     this.steps = [];
     const assignment: Assignment = {};
     let domains = this.initDomains();
@@ -212,41 +230,55 @@ export class CSPSolver {
         return true;
       }
 
-      const variable = this.selectUnassignedVariable(assignment, domains);
-      const values = this.orderDomainValues(variable, assignment, domains);
+      const variable = this.selectUnassignedVariable(assignment, domains, options);
+      const values = this.orderDomainValues(variable, assignment, domains, options);
 
       for (const value of values) {
         if (this.isConsistent(variable, value, assignment)) {
           assignment[variable] = value;
+          
+          let msg = `Assigning ${variable} to House ${value + 1}`;
+          let heuristics = [];
+          if (options.mrv) heuristics.push('MRV');
+          if (options.degree) heuristics.push('Degree');
+          if (options.lcv) heuristics.push('LCV');
+          if (heuristics.length > 0) msg += ` (${heuristics.join(', ')})`;
+
           this.steps.push({
             type: 'ASSIGN',
             variable,
             value,
-            message: `Assigning ${variable} to House ${value + 1} (MRV & LCV)`,
+            message: msg,
             domains: this.snapshotDomains(domains)
           });
 
-          const newDomains = this.forwardCheck(variable, value, assignment, domains);
-          
-          if (newDomains) {
-            this.steps.push({
-              type: 'FORWARD_CHECK',
-              variable,
-              value,
-              message: `Forward checking successful after assigning ${variable}.`,
-              domains: this.snapshotDomains(newDomains)
-            });
+          if (options.forwardChecking) {
+            const newDomains = this.forwardCheck(variable, value, assignment, domains);
+            
+            if (newDomains) {
+              this.steps.push({
+                type: 'FORWARD_CHECK',
+                variable,
+                value,
+                message: `Forward checking successful after assigning ${variable}.`,
+                domains: this.snapshotDomains(newDomains)
+              });
 
-            const result = backtrack(assignment, newDomains);
-            if (result) return true;
+              const result = backtrack(assignment, newDomains);
+              if (result) return true;
+            } else {
+              this.steps.push({
+                type: 'FAIL',
+                variable,
+                value,
+                message: `Forward checking failed for ${variable} = ${value + 1}. Domain wiped out.`,
+                domains: this.snapshotDomains(domains)
+              });
+            }
           } else {
-            this.steps.push({
-              type: 'FAIL',
-              variable,
-              value,
-              message: `Forward checking failed for ${variable} = ${value + 1}. Domain wiped out.`,
-              domains: this.snapshotDomains(domains)
-            });
+            // Standard backtracking without FC
+            const result = backtrack(assignment, domains);
+            if (result) return true;
           }
 
           delete assignment[variable];

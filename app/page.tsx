@@ -2,10 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { CheckSquare, Square, ListChecks, X, Eraser, CheckCircle2, AlertCircle, RefreshCw, Trophy, Lightbulb, Play, FastForward, Pause } from 'lucide-react';
+import { CheckSquare, Square, ListChecks, X, Eraser, CheckCircle2, AlertCircle, RefreshCw, Trophy, Lightbulb, Play, FastForward, Pause, Settings2, Zap } from 'lucide-react';
 import { clsx } from 'clsx';
 import { puzzles, Puzzle } from '@/lib/puzzles';
-import { CSPSolver, Step } from '@/lib/csp';
+import { CSPSolver, Step, SolverOptions } from '@/lib/csp';
 
 type GridState = Record<number, Record<string, string>>;
 
@@ -24,6 +24,13 @@ export default function ZebraPuzzle() {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [aiSpeed, setAiSpeed] = useState(500); // ms per step
   const [domains, setDomains] = useState<Record<string, number[]>>({});
+  const [benchmarkStats, setBenchmarkStats] = useState<{ timeMs: number, steps: number, backtracks: number } | null>(null);
+  const [solverOptions, setSolverOptions] = useState<SolverOptions>({
+    forwardChecking: true,
+    mrv: true,
+    degree: true,
+    lcv: true
+  });
 
   const loadPuzzle = (puzzle: Puzzle) => {
     setCurrentPuzzle(puzzle);
@@ -36,6 +43,7 @@ export default function ZebraPuzzle() {
     setAiSteps([]);
     setCurrentStepIndex(0);
     setDomains({});
+    setBenchmarkStats(null);
   };
 
   const toggleClue = (index: number) => {
@@ -147,15 +155,69 @@ export default function ZebraPuzzle() {
   const startAISolve = () => {
     setGridState({});
     setCrossedClues(new Set());
+    setBenchmarkStats(null);
     
     // Small delay to allow state to clear before heavy computation
     setTimeout(() => {
       const solver = new CSPSolver(currentPuzzle);
-      const steps = solver.solve();
+      const startTime = performance.now();
+      const steps = solver.solve(solverOptions);
+      const endTime = performance.now();
+      
+      setBenchmarkStats({
+        timeMs: endTime - startTime,
+        steps: steps.length,
+        backtracks: steps.filter(s => s.type === 'BACKTRACK').length
+      });
+
       setAiSteps(steps);
       setCurrentStepIndex(0);
       setIsAISolving(true);
       setGameStatus('playing');
+    }, 50);
+  };
+
+  const instantSolve = () => {
+    setGridState({});
+    setCrossedClues(new Set());
+    setIsAISolving(false);
+    setDomains({});
+    setBenchmarkStats(null);
+    
+    setTimeout(() => {
+      const solver = new CSPSolver(currentPuzzle);
+      const startTime = performance.now();
+      const steps = solver.solve(solverOptions);
+      const endTime = performance.now();
+      
+      setBenchmarkStats({
+        timeMs: endTime - startTime,
+        steps: steps.length,
+        backtracks: steps.filter(s => s.type === 'BACKTRACK').length
+      });
+      
+      // Reconstruct final state instantly
+      const finalState: GridState = {};
+      steps.forEach(step => {
+        if (step.type === 'ASSIGN' && step.variable && step.value !== undefined) {
+          const category = currentPuzzle.categories.find(c => c.options.includes(step.variable!))?.name;
+          if (category) {
+            if (!finalState[step.value]) finalState[step.value] = {};
+            finalState[step.value][category] = step.variable;
+          }
+        } else if (step.type === 'BACKTRACK' && step.variable && step.value !== undefined) {
+          const category = currentPuzzle.categories.find(c => c.options.includes(step.variable!))?.name;
+          if (category && finalState[step.value]) {
+            delete finalState[step.value][category];
+          }
+        }
+      });
+      
+      setGridState(finalState);
+      setGameStatus('won');
+      setHintMessage(`Solved instantly in ${(endTime - startTime).toFixed(2)}ms!`);
+      if (hintTimeout) clearTimeout(hintTimeout);
+      setHintTimeout(setTimeout(() => setHintMessage(null), 5000));
     }, 50);
   };
 
@@ -321,32 +383,33 @@ export default function ZebraPuzzle() {
               </div>
               <div className="flex items-center gap-2">
                 {!isAISolving ? (
-                  <button 
-                    onClick={startAISolve}
-                    className="p-2 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-xl transition-colors flex items-center gap-2 px-3 border border-indigo-200"
-                    title="Watch AI Solve (CSP)"
-                  >
-                    <Play className="w-4 h-4" />
-                    <span className="text-sm font-medium">AI Solve</span>
-                  </button>
+                  <>
+                    <button 
+                      onClick={startAISolve}
+                      className="p-2 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-xl transition-colors flex items-center gap-2 px-3 border border-indigo-200"
+                      title="Watch AI Solve (CSP)"
+                    >
+                      <Play className="w-4 h-4" />
+                      <span className="text-sm font-medium">AI Solve</span>
+                    </button>
+                    <button 
+                      onClick={instantSolve}
+                      className="p-2 text-fuchsia-600 hover:text-fuchsia-700 hover:bg-fuchsia-50 rounded-xl transition-colors flex items-center gap-2 px-3 border border-fuchsia-200"
+                      title="Instant Solve & Benchmark"
+                    >
+                      <Zap className="w-4 h-4" />
+                      <span className="text-sm font-medium hidden sm:block">Instant</span>
+                    </button>
+                  </>
                 ) : (
-                  <div className="flex items-center gap-1 bg-indigo-50 rounded-xl border border-indigo-200 p-1">
-                    <button 
-                      onClick={stopAISolve}
-                      className="p-1.5 text-red-500 hover:bg-red-100 rounded-lg transition-colors"
-                      title="Stop AI"
-                    >
-                      <Pause className="w-4 h-4" />
-                    </button>
-                    <button 
-                      onClick={() => setAiSpeed(prev => prev === 500 ? 100 : prev === 100 ? 10 : 500)}
-                      className="p-1.5 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors flex items-center gap-1"
-                      title="Change Speed"
-                    >
-                      <FastForward className="w-4 h-4" />
-                      <span className="text-xs font-bold w-8">{aiSpeed}ms</span>
-                    </button>
-                  </div>
+                  <button 
+                    onClick={stopAISolve}
+                    className="p-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-xl transition-colors flex items-center gap-2 px-3 border border-red-200"
+                    title="Stop AI"
+                  >
+                    <Pause className="w-4 h-4" />
+                    <span className="text-sm font-medium">Stop AI</span>
+                  </button>
                 )}
                 <button 
                   onClick={handleHint}
@@ -363,12 +426,88 @@ export default function ZebraPuzzle() {
                     setCrossedClues(new Set());
                     setIsAISolving(false);
                     setDomains({});
+                    setBenchmarkStats(null);
                   }}
                   className="p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-xl transition-colors"
                   title="Reset Puzzle"
                 >
                   <RefreshCw className="w-5 h-5" />
                 </button>
+              </div>
+            </div>
+            
+            {/* AI Settings Bar */}
+            <div className="bg-stone-50 border-b border-stone-100 p-4 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                <div className="flex items-center gap-2 font-medium text-stone-700">
+                  <Settings2 className="w-4 h-4" />
+                  AI Algorithms:
+                </div>
+                <label className="flex items-center gap-1.5 cursor-pointer text-stone-600 hover:text-stone-900">
+                  <input 
+                    type="checkbox" 
+                    checked={solverOptions.forwardChecking} 
+                    onChange={e => setSolverOptions(s => ({...s, forwardChecking: e.target.checked}))}
+                    disabled={isAISolving}
+                    className="rounded border-stone-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  Forward Checking
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer text-stone-600 hover:text-stone-900">
+                  <input 
+                    type="checkbox" 
+                    checked={solverOptions.mrv} 
+                    onChange={e => setSolverOptions(s => ({...s, mrv: e.target.checked}))}
+                    disabled={isAISolving}
+                    className="rounded border-stone-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  MRV
+                </label>
+                <label className={clsx("flex items-center gap-1.5 cursor-pointer transition-opacity", !solverOptions.mrv ? "opacity-50" : "text-stone-600 hover:text-stone-900")}>
+                  <input 
+                    type="checkbox" 
+                    checked={solverOptions.degree} 
+                    onChange={e => setSolverOptions(s => ({...s, degree: e.target.checked}))}
+                    disabled={isAISolving || !solverOptions.mrv}
+                    className="rounded border-stone-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  Degree
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer text-stone-600 hover:text-stone-900">
+                  <input 
+                    type="checkbox" 
+                    checked={solverOptions.lcv} 
+                    onChange={e => setSolverOptions(s => ({...s, lcv: e.target.checked}))}
+                    disabled={isAISolving}
+                    className="rounded border-stone-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  LCV
+                </label>
+              </div>
+              
+              <div className="flex items-center gap-3 text-sm">
+                {(isAISolving || benchmarkStats) && (
+                  <div className="flex flex-wrap items-center gap-3 mr-4 px-3 py-1.5 bg-indigo-100 text-indigo-800 rounded-lg font-mono text-xs border border-indigo-200">
+                    {benchmarkStats && !isAISolving && (
+                      <span title="Computation time">⏱ {benchmarkStats.timeMs.toFixed(2)}ms</span>
+                    )}
+                    <span title="Total steps">👣 {isAISolving ? `${currentStepIndex} / ${aiSteps.length}` : benchmarkStats?.steps} steps</span>
+                    <span title="Backtracks" className="font-semibold text-red-600">
+                      ↩️ {isAISolving ? aiSteps.slice(0, currentStepIndex).filter(s => s.type === 'BACKTRACK').length : benchmarkStats?.backtracks} backtracks
+                    </span>
+                  </div>
+                )}
+                <span className="font-medium text-stone-700">Speed:</span>
+                <input 
+                  type="range" 
+                  min="10" 
+                  max="1000" 
+                  step="10" 
+                  value={aiSpeed} 
+                  onChange={e => setAiSpeed(Number(e.target.value))}
+                  className="w-24 accent-indigo-600"
+                />
+                <span className="text-stone-500 font-mono w-12 text-right">{aiSpeed}ms</span>
               </div>
             </div>
             
