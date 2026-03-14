@@ -4,10 +4,91 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CheckSquare, Square, ListChecks, X, Eraser, CheckCircle2, AlertCircle, RefreshCw, Trophy, Lightbulb, Play, FastForward, Pause, Settings2, Zap } from 'lucide-react';
 import { clsx } from 'clsx';
-import { puzzles, Puzzle } from '@/lib/puzzles';
+import { puzzles, Puzzle, Constraint, Category } from '@/lib/puzzles';
 import { CSPSolver, Step, SolverOptions } from '@/lib/csp';
 
 type GridState = Record<number, Record<string, string>>;
+
+const getConstraintForClue = (clueText: string, constraints: Constraint[]) => {
+  const lowerClue = clueText.toLowerCase();
+  const sortedConstraints = [...constraints].sort((a, b) => {
+    const aVars = a.var2 ? 2 : 1;
+    const bVars = b.var2 ? 2 : 1;
+    return bVars - aVars;
+  });
+
+  return sortedConstraints.find(c => {
+    const hasVar1 = lowerClue.includes(c.var1.toLowerCase());
+    if (c.var2) {
+      const hasVar2 = lowerClue.includes(c.var2.toLowerCase());
+      return hasVar1 && hasVar2;
+    }
+    return hasVar1;
+  });
+};
+
+const evaluateConstraint = (c: Constraint, gridState: GridState, houses: number, categories: Category[]): 'SATISFIED' | 'VIOLATED' | 'PENDING' => {
+  let pos1 = -1;
+  let pos2 = -1;
+  
+  const getCategory = (v: string) => categories.find(cat => cat.options.includes(v))?.name;
+  const cat1 = getCategory(c.var1);
+  const cat2 = c.var2 ? getCategory(c.var2) : undefined;
+
+  for (let i = 0; i < houses; i++) {
+    if (!gridState[i]) continue;
+    for (const cat in gridState[i]) {
+      if (gridState[i][cat] === c.var1) pos1 = i;
+      if (c.var2 && gridState[i][cat] === c.var2) pos2 = i;
+    }
+  }
+
+  if (c.type === 'POSITION') {
+    if (pos1 !== -1) return pos1 === c.value ? 'SATISFIED' : 'VIOLATED';
+    if (c.value !== undefined && gridState[c.value] && cat1 && gridState[c.value][cat1] && gridState[c.value][cat1] !== c.var1) return 'VIOLATED';
+    return 'PENDING';
+  }
+
+  if (c.type === 'MIDDLE') {
+    const mid = Math.floor(houses / 2);
+    if (pos1 !== -1) return pos1 === mid ? 'SATISFIED' : 'VIOLATED';
+    if (gridState[mid] && cat1 && gridState[mid][cat1] && gridState[mid][cat1] !== c.var1) return 'VIOLATED';
+    return 'PENDING';
+  }
+
+  if (pos1 !== -1 && pos2 !== -1) {
+    if (c.type === 'EQUAL') return pos1 === pos2 ? 'SATISFIED' : 'VIOLATED';
+    if (c.type === 'NEXT_TO') return Math.abs(pos1 - pos2) === 1 ? 'SATISFIED' : 'VIOLATED';
+    if (c.type === 'RIGHT_OF') return pos1 === pos2 + 1 ? 'SATISFIED' : 'VIOLATED';
+  }
+
+  if (c.type === 'EQUAL') {
+    if (pos1 !== -1 && cat2 && gridState[pos1] && gridState[pos1][cat2] && gridState[pos1][cat2] !== c.var2) return 'VIOLATED';
+    if (pos2 !== -1 && cat1 && gridState[pos2] && gridState[pos2][cat1] && gridState[pos2][cat1] !== c.var1) return 'VIOLATED';
+  }
+
+  if (c.type === 'RIGHT_OF') {
+    if (pos2 === houses - 1) return 'VIOLATED';
+    if (pos1 === 0) return 'VIOLATED';
+    if (pos2 !== -1 && pos2 + 1 < houses && cat1 && gridState[pos2 + 1] && gridState[pos2 + 1][cat1] && gridState[pos2 + 1][cat1] !== c.var1) return 'VIOLATED';
+    if (pos1 !== -1 && pos1 - 1 >= 0 && cat2 && gridState[pos1 - 1] && gridState[pos1 - 1][cat2] && gridState[pos1 - 1][cat2] !== c.var2) return 'VIOLATED';
+  }
+
+  if (c.type === 'NEXT_TO') {
+    if (pos1 !== -1 && cat2) {
+      const leftOccupied = pos1 === 0 || (gridState[pos1 - 1] && gridState[pos1 - 1][cat2] && gridState[pos1 - 1][cat2] !== c.var2);
+      const rightOccupied = pos1 === houses - 1 || (gridState[pos1 + 1] && gridState[pos1 + 1][cat2] && gridState[pos1 + 1][cat2] !== c.var2);
+      if (leftOccupied && rightOccupied) return 'VIOLATED';
+    }
+    if (pos2 !== -1 && cat1) {
+      const leftOccupied = pos2 === 0 || (gridState[pos2 - 1] && gridState[pos2 - 1][cat1] && gridState[pos2 - 1][cat1] !== c.var1);
+      const rightOccupied = pos2 === houses - 1 || (gridState[pos2 + 1] && gridState[pos2 + 1][cat1] && gridState[pos2 + 1][cat1] !== c.var1);
+      if (leftOccupied && rightOccupied) return 'VIOLATED';
+    }
+  }
+
+  return 'PENDING';
+};
 
 export default function ZebraPuzzle() {
   const [currentPuzzle, setCurrentPuzzle] = useState<Puzzle>(puzzles[0]);
@@ -584,25 +665,41 @@ export default function ZebraPuzzle() {
             <ul className="space-y-2">
               {currentPuzzle.clues.map((clue, i) => {
                 const isCrossed = crossedClues.has(i);
+                const constraint = getConstraintForClue(clue, currentPuzzle.constraints);
+                const status = constraint ? evaluateConstraint(constraint, gridState, currentPuzzle.houses, currentPuzzle.categories) : 'PENDING';
+
                 return (
                   <li
                     key={i}
                     className={clsx(
                       "flex gap-3 cursor-pointer p-3 rounded-xl transition-all border-2",
-                      isCrossed 
-                        ? "bg-stone-50 border-transparent opacity-60" 
-                        : "bg-white border-stone-100 hover:border-indigo-200 hover:bg-indigo-50/30 shadow-sm"
+                      status === 'VIOLATED' 
+                        ? "bg-red-50 border-red-200" 
+                        : status === 'SATISFIED'
+                          ? "bg-emerald-50 border-emerald-200"
+                          : isCrossed 
+                            ? "bg-stone-50 border-transparent opacity-60" 
+                            : "bg-white border-stone-100 hover:border-indigo-200 hover:bg-indigo-50/30 shadow-sm"
                     )}
                     onClick={() => toggleClue(i)}
                   >
                     <div className="mt-0.5 shrink-0">
-                      {isCrossed ? (
+                      {status === 'VIOLATED' ? (
+                        <AlertCircle className="w-5 h-5 text-red-500" />
+                      ) : status === 'SATISFIED' ? (
+                        <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                      ) : isCrossed ? (
                         <CheckSquare className="w-5 h-5 text-indigo-500" />
                       ) : (
                         <Square className="w-5 h-5 text-stone-300" />
                       )}
                     </div>
-                    <span className={clsx("text-sm leading-relaxed", isCrossed ? "line-through text-stone-500" : "text-stone-700")}>
+                    <span className={clsx(
+                      "text-sm leading-relaxed", 
+                      (isCrossed || status === 'SATISFIED') ? "line-through text-stone-500" : "text-stone-700",
+                      status === 'VIOLATED' && "text-red-800 font-medium",
+                      status === 'SATISFIED' && "text-emerald-800"
+                    )}>
                       {clue}
                     </span>
                   </li>
