@@ -150,5 +150,59 @@ export const puzzles: Puzzle[] = [
       { Color: 'Ivory', Nationality: 'Spaniard', Drink: 'Orange Juice', Smoke: 'Lucky Strike', Pet: 'Dog' },
       { Color: 'Green', Nationality: 'Japanese', Drink: 'Coffee', Smoke: 'Parliaments', Pet: 'Zebra' }
     ]
+  },
+  {
+    id: 'hard-2',
+    difficulty: 'Hard',
+    title: 'Zebra Puzzle (VN)',
+    houses: 5,
+    categories: [
+      { name: 'Màu sắc', options: ['Đỏ', 'Xanh lá', 'Trắng', 'Vàng', 'Xanh dương'] },
+      { name: 'Quốc tịch', options: ['Anh', 'Thụy Điển', 'Đan Mạch', 'Na Uy', 'Đức'] },
+      { name: 'Đồ uống', options: ['Trà', 'Cà phê', 'Sữa', 'Bia', 'Nước'] },
+      { name: 'Thuốc lá', options: ['Pall Mall', 'Dunhill', 'Blend', 'Bluemaster', 'Prince'] },
+      { name: 'Thú cưng', options: ['Chó', 'Chim', 'Mèo', 'Ngựa', 'Cá'] }
+    ],
+    clues: [
+      "Người Anh sống trong nhà màu đỏ",
+      "Người Thụy Điển có một con chó cưng",
+      "Người Đan mạch uống trà",
+      "Ngôi nhà màu xanh lá cây nằm bên trái ngôi nhà màu trắng",
+      "Chủ của ngồi nhà màu xanh lá cây uống cà phê",
+      "Người hút thuốc lá Pall Mall có một con chim",
+      "Chủ của ngôi nhà màu vàng hút thuốc lá Dunhill",
+      "Người Na Uy sống trong ngôi nhà đầu tiên",
+      "Người hút thuốc lá Blend sống cạnh ngôi nhà có một con mèo",
+      "Người có một con ngựa sống cạnh ngôi nhà có người hút thuốc lá Dunhill",
+      "Người hút thuốc lá Bluemaster uống bia",
+      "Người Đức hút thuốc lá Prince",
+      "Người Na Uy sống cạnh ngôi nhà có màu xanh da trời",
+      "Người hút thuốc lá Blend là hàng xóm của người uống nước",
+      "Người sống ở ngôi nhà chính giữa uống sữa"
+    ],
+    constraints: [
+      { type: 'EQUAL', var1: 'Anh', var2: 'Đỏ' },
+      { type: 'EQUAL', var1: 'Thụy Điển', var2: 'Chó' },
+      { type: 'EQUAL', var1: 'Đan Mạch', var2: 'Trà' },
+      { type: 'RIGHT_OF', var1: 'Trắng', var2: 'Xanh lá' },
+      { type: 'EQUAL', var1: 'Xanh lá', var2: 'Cà phê' },
+      { type: 'EQUAL', var1: 'Pall Mall', var2: 'Chim' },
+      { type: 'EQUAL', var1: 'Vàng', var2: 'Dunhill' },
+      { type: 'POSITION', var1: 'Na Uy', value: 0 },
+      { type: 'NEXT_TO', var1: 'Blend', var2: 'Mèo' },
+      { type: 'NEXT_TO', var1: 'Ngựa', var2: 'Dunhill' },
+      { type: 'EQUAL', var1: 'Bluemaster', var2: 'Bia' },
+      { type: 'EQUAL', var1: 'Đức', var2: 'Prince' },
+      { type: 'NEXT_TO', var1: 'Na Uy', var2: 'Xanh dương' },
+      { type: 'NEXT_TO', var1: 'Blend', var2: 'Nước' },
+      { type: 'MIDDLE', var1: 'Sữa' }
+    ],
+    solution: [
+      { 'Màu sắc': 'Vàng', 'Quốc tịch': 'Na Uy', 'Đồ uống': 'Nước', 'Thuốc lá': 'Dunhill', 'Thú cưng': 'Mèo' },
+      { 'Màu sắc': 'Xanh dương', 'Quốc tịch': 'Đan Mạch', 'Đồ uống': 'Trà', 'Thuốc lá': 'Blend', 'Thú cưng': 'Ngựa' },
+      { 'Màu sắc': 'Đỏ', 'Quốc tịch': 'Anh', 'Đồ uống': 'Sữa', 'Thuốc lá': 'Pall Mall', 'Thú cưng': 'Chim' },
+      { 'Màu sắc': 'Xanh lá', 'Quốc tịch': 'Đức', 'Đồ uống': 'Cà phê', 'Thuốc lá': 'Prince', 'Thú cưng': 'Cá' },
+      { 'Màu sắc': 'Trắng', 'Quốc tịch': 'Thụy Điển', 'Đồ uống': 'Bia', 'Thuốc lá': 'Bluemaster', 'Thú cưng': 'Chó' }
+    ]
   }
 ];

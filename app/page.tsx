@@ -2,12 +2,20 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { CheckSquare, Square, ListChecks, X, Eraser, CheckCircle2, AlertCircle, RefreshCw, Trophy, Lightbulb, Play, FastForward, Pause, Settings2, Zap } from 'lucide-react';
+import { CheckSquare, Square, ListChecks, X, Eraser, CheckCircle2, AlertCircle, RefreshCw, Trophy, Lightbulb, Play, FastForward, Pause, Settings2, Zap, BarChart } from 'lucide-react';
 import { clsx } from 'clsx';
 import { puzzles, Puzzle, Constraint, Category } from '@/lib/puzzles';
 import { CSPSolver, Step, SolverOptions } from '@/lib/csp';
 
 type GridState = Record<number, Record<string, string>>;
+
+type BenchmarkResult = {
+  name: string;
+  options: SolverOptions;
+  timeMs: number;
+  steps: number;
+  backtracks: number;
+};
 
 const getConstraintForClue = (clueText: string, constraints: Constraint[]) => {
   const lowerClue = clueText.toLowerCase();
@@ -106,6 +114,8 @@ export default function ZebraPuzzle() {
   const [aiSpeed, setAiSpeed] = useState(500); // ms per step
   const [domains, setDomains] = useState<Record<string, number[]>>({});
   const [benchmarkStats, setBenchmarkStats] = useState<{ timeMs: number, steps: number, backtracks: number } | null>(null);
+  const [benchmarkResults, setBenchmarkResults] = useState<BenchmarkResult[] | null>(null);
+  const [isBenchmarking, setIsBenchmarking] = useState(false);
   const [solverOptions, setSolverOptions] = useState<SolverOptions>({
     forwardChecking: true,
     mrv: true,
@@ -309,6 +319,53 @@ export default function ZebraPuzzle() {
     setHintTimeout(setTimeout(() => setHintMessage(null), 3000));
   };
 
+  const runFullBenchmark = async () => {
+    setIsBenchmarking(true);
+    setBenchmarkResults([]);
+    
+    // Yield to React to render the modal
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    const combinations: {name: string, options: SolverOptions}[] = [
+      { name: 'Standard Backtracking', options: { forwardChecking: false, mrv: false, degree: false, lcv: false } },
+      { name: 'FC Only', options: { forwardChecking: true, mrv: false, degree: false, lcv: false } },
+      { name: 'LCV Only', options: { forwardChecking: false, mrv: false, degree: false, lcv: true } },
+      { name: 'FC + LCV', options: { forwardChecking: true, mrv: false, degree: false, lcv: true } },
+      { name: 'MRV Only', options: { forwardChecking: false, mrv: true, degree: false, lcv: false } },
+      { name: 'MRV + Degree', options: { forwardChecking: false, mrv: true, degree: true, lcv: false } },
+      { name: 'MRV + LCV', options: { forwardChecking: false, mrv: true, degree: false, lcv: true } },
+      { name: 'MRV + Degree + LCV', options: { forwardChecking: false, mrv: true, degree: true, lcv: true } },
+      { name: 'FC + MRV', options: { forwardChecking: true, mrv: true, degree: false, lcv: false } },
+      { name: 'FC + MRV + Degree', options: { forwardChecking: true, mrv: true, degree: true, lcv: false } },
+      { name: 'FC + MRV + LCV', options: { forwardChecking: true, mrv: true, degree: false, lcv: true } },
+      { name: 'All (FC + MRV + Degree + LCV)', options: { forwardChecking: true, mrv: true, degree: true, lcv: true } },
+    ];
+
+    const results: BenchmarkResult[] = [];
+    
+    for (const combo of combinations) {
+      // Yield before each heavy computation to keep UI responsive
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      const solver = new CSPSolver(currentPuzzle);
+      const startTime = performance.now();
+      const steps = solver.solve(combo.options);
+      const endTime = performance.now();
+      
+      results.push({
+        name: combo.name,
+        options: combo.options,
+        timeMs: endTime - startTime,
+        steps: steps.length,
+        backtracks: steps.filter(s => s.type === 'BACKTRACK').length
+      });
+      
+      setBenchmarkResults([...results]);
+    }
+    
+    setIsBenchmarking(false);
+  };
+
   useEffect(() => {
     if (!isAISolving || aiSteps.length === 0 || currentStepIndex >= aiSteps.length) {
       if (isAISolving && currentStepIndex >= aiSteps.length) {
@@ -371,19 +428,19 @@ export default function ZebraPuzzle() {
             </div>
             <h1 className="text-xl font-bold text-stone-800 hidden sm:block">Zebra Puzzle</h1>
           </div>
-          <div className="flex gap-2 p-1 bg-stone-100 rounded-xl">
+          <div className="flex gap-2 p-1 bg-stone-100 rounded-xl overflow-x-auto overflow-y-hidden hide-scrollbar max-w-full">
             {puzzles.map(p => (
               <button
                 key={p.id}
                 onClick={() => loadPuzzle(p)}
                 className={clsx(
-                  "px-3 sm:px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
+                  "px-3 sm:px-4 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap",
                   currentPuzzle.id === p.id 
                     ? "bg-white text-indigo-700 shadow-sm ring-1 ring-stone-200/50" 
                     : "text-stone-600 hover:text-stone-900 hover:bg-stone-200/50"
                 )}
               >
-                {p.difficulty}
+                {p.title}
               </button>
             ))}
           </div>
@@ -475,11 +532,21 @@ export default function ZebraPuzzle() {
                     </button>
                     <button 
                       onClick={instantSolve}
-                      className="p-2 text-fuchsia-600 hover:text-fuchsia-700 hover:bg-fuchsia-50 rounded-xl transition-colors flex items-center gap-2 px-3 border border-fuchsia-200"
+                      disabled={isBenchmarking}
+                      className="p-2 text-fuchsia-600 hover:text-fuchsia-700 hover:bg-fuchsia-50 rounded-xl transition-colors flex items-center gap-2 px-3 border border-fuchsia-200 disabled:opacity-50"
                       title="Instant Solve & Benchmark"
                     >
                       <Zap className="w-4 h-4" />
                       <span className="text-sm font-medium hidden sm:block">Instant</span>
+                    </button>
+                    <button 
+                      onClick={runFullBenchmark}
+                      disabled={isBenchmarking}
+                      className="p-2 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition-colors flex items-center gap-2 px-3 border border-emerald-200 disabled:opacity-50"
+                      title="Run Full Benchmark Report"
+                    >
+                      <BarChart className="w-4 h-4" />
+                      <span className="text-sm font-medium hidden sm:block">Report</span>
                     </button>
                   </>
                 ) : (
@@ -783,6 +850,73 @@ export default function ZebraPuzzle() {
               </div>
             </motion.div>
           </>
+        )}
+      </AnimatePresence>
+      {/* Benchmark Report Modal */}
+      <AnimatePresence>
+        {benchmarkResults !== null && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+            >
+              <div className="p-6 border-b border-stone-100 flex justify-between items-center bg-stone-50">
+                <div>
+                  <h2 className="text-xl font-bold text-stone-800 flex items-center gap-2">
+                    <BarChart className="w-6 h-6 text-emerald-600" />
+                    Algorithm Benchmark Report
+                  </h2>
+                  <p className="text-sm text-stone-500 mt-1">Puzzle: {currentPuzzle.title}</p>
+                </div>
+                <button 
+                  onClick={() => !isBenchmarking && setBenchmarkResults(null)} 
+                  disabled={isBenchmarking}
+                  className="p-2 hover:bg-stone-200 rounded-full disabled:opacity-50 transition-colors"
+                >
+                  <X className="w-5 h-5 text-stone-600" />
+                </button>
+              </div>
+              <div className="overflow-auto p-6">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b-2 border-stone-200">
+                      <th className="p-3 font-bold text-stone-700">Algorithm Combination</th>
+                      <th className="p-3 font-bold text-stone-700 text-right">Time (ms)</th>
+                      <th className="p-3 font-bold text-stone-700 text-right">Total Steps</th>
+                      <th className="p-3 font-bold text-stone-700 text-right">Backtracks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {benchmarkResults.map((res, i) => (
+                      <tr key={i} className="border-b border-stone-100 hover:bg-stone-50 transition-colors">
+                        <td className="p-3 font-medium text-stone-800">{res.name}</td>
+                        <td className="p-3 text-right font-mono text-sm text-indigo-600">{res.timeMs.toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono text-sm text-stone-600">{res.steps.toLocaleString()}</td>
+                        <td className="p-3 text-right font-mono text-sm text-red-600">{res.backtracks.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                    {isBenchmarking && (
+                      <tr>
+                        <td colSpan={4} className="p-8 text-center text-stone-500">
+                          <div className="flex items-center justify-center gap-3">
+                            <RefreshCw className="w-5 h-5 animate-spin text-emerald-600" />
+                            <span className="font-medium">Running benchmarks... Please wait.</span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
