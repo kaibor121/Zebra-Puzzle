@@ -11,11 +11,15 @@ export type SolverOptions = {
 };
 
 export type Step = {
-  type: 'ASSIGN' | 'BACKTRACK' | 'FORWARD_CHECK' | 'DOMAIN_REDUCE' | 'SUCCESS' | 'FAIL';
+  type: 'ASSIGN' | 'BACKTRACK' | 'FORWARD_CHECK' | 'DOMAIN_REDUCE' | 'SUCCESS' | 'FAIL' | 'REASONING';
   variable?: string;
   value?: number;
   domains?: Record<string, number[]>; // Snapshot of domains for visualization
   message: string;
+  // Detailed explanation fields for CSV export
+  degree?: number;
+  remainingDomains?: string;
+  explanation?: string;
 };
 
 export class CSPSolver {
@@ -142,7 +146,13 @@ export class CSPSolver {
     const unassigned = this.variables.filter(v => !(v in assignment));
     
     if (!options.mrv) {
-      return unassigned[0]; // Standard backtracking: pick first unassigned
+      const selected = unassigned[0];
+      this.steps.push({
+        type: 'REASONING',
+        message: `[Variable Selection] Picked '${selected}' (Standard: first unassigned).`,
+        domains: this.snapshotDomains(domains)
+      });
+      return selected;
     }
 
     // Calculate degree (number of constraints involving the variable)
@@ -153,19 +163,39 @@ export class CSPSolver {
       ).length;
     };
 
-    return unassigned.reduce((best, current) => {
+    let best = unassigned[0];
+    
+    for (let i = 1; i < unassigned.length; i++) {
+      const current = unassigned[i];
       const bestSize = domains[best].size;
       const currentSize = domains[current].size;
       
-      if (currentSize < bestSize) return current;
-      if (currentSize > bestSize) return best;
-      
-      // Tie-breaker: Degree Heuristic (choose variable involved in most constraints)
-      if (options.degree) {
-        return getDegree(current) > getDegree(best) ? current : best;
+      if (currentSize < bestSize) {
+        best = current;
+      } else if (currentSize === bestSize && options.degree) {
+        if (getDegree(current) > getDegree(best)) {
+          best = current;
+        }
       }
-      return best;
+    }
+
+    const bestSize = domains[best].size;
+    const bestDegree = getDegree(best);
+    let msg = `[MRV] Selected '${best}' (Domain size: ${bestSize}).`;
+    if (options.degree) {
+       msg = `[MRV+Degree] Selected '${best}' (Domain size: ${bestSize}, Degree: ${bestDegree}).`;
+    }
+
+    this.steps.push({
+      type: 'REASONING',
+      message: msg,
+      domains: this.snapshotDomains(domains),
+      degree: bestDegree,
+      remainingDomains: JSON.stringify(this.snapshotDomains(domains)),
+      explanation: `Hệ thống chọn biến '${best}' để gán giá trị tiếp theo. Tiêu chí chọn: ${options.mrv ? `MRV (Minimum Remaining Values - chọn biến có ít lựa chọn nhất, hiện có ${bestSize} lựa chọn)` : 'Chọn biến chưa gán đầu tiên'}${options.degree ? ` kết hợp với Degree heuristic (chọn biến tham gia vào nhiều ràng buộc nhất, hiện có ${bestDegree} ràng buộc)` : ''}. Điều này giúp phát hiện lỗi sớm nhất có thể.`
     });
+
+    return best;
   }
 
   // Heuristic: Least Constraining Value (LCV)
@@ -174,26 +204,48 @@ export class CSPSolver {
     const values = Array.from(domains[variable]);
     
     if (!options.lcv) {
-      return values; // Standard backtracking: default order
+      this.steps.push({
+        type: 'REASONING',
+        message: `[Value Ordering] Trying values for '${variable}': [${values.map(v => v+1).join(', ')}] (Standard order).`,
+        domains: this.snapshotDomains(domains)
+      });
+      return values;
     }
 
-    return values.sort((valA, valB) => {
-      // Count how many values would be removed from other domains if we choose valA
+    const valueImpacts: Record<number, number> = {};
+
+    const sortedValues = values.sort((valA, valB) => {
       const countRemoved = (val: number) => {
+        if (valueImpacts[val] !== undefined) return valueImpacts[val];
         let removed = 0;
         const testDomains = this.forwardCheck(variable, val, assignment, domains);
-        if (!testDomains) return Infinity; // This value leads to immediate failure
+        if (!testDomains) {
+          valueImpacts[val] = Infinity;
+          return Infinity; // This value leads to immediate failure
+        }
         
         for (const v of this.variables) {
           if (!(v in assignment) && v !== variable) {
             removed += (domains[v].size - testDomains[v].size);
           }
         }
+        valueImpacts[val] = removed;
         return removed;
       };
 
       return countRemoved(valA) - countRemoved(valB);
     });
+
+    const impactDetails = sortedValues.map(v => `House ${v+1} (-${valueImpacts[v] === Infinity ? 'ALL' : valueImpacts[v]} opts)`).join(', ');
+
+    this.steps.push({
+      type: 'REASONING',
+      message: `[LCV] Ordered values for '${variable}': ${impactDetails}.`,
+      domains: this.snapshotDomains(domains),
+      explanation: `Sắp xếp các giá trị (ngôi nhà) có thể gán cho '${variable}' theo tiêu chí LCV (Least Constraining Value). Hệ thống ưu tiên chọn ngôi nhà nào mà khi gán vào, nó ít làm giảm số lượng lựa chọn của các biến khác nhất. Thứ tự ưu tiên: ${impactDetails}.`
+    });
+
+    return sortedValues;
   }
 
   snapshotDomains(domains: Domains): Record<string, number[]> {
@@ -249,7 +301,9 @@ export class CSPSolver {
             variable,
             value,
             message: msg,
-            domains: this.snapshotDomains(domains)
+            domains: this.snapshotDomains(domains),
+            remainingDomains: JSON.stringify(this.snapshotDomains(domains)),
+            explanation: `Thực hiện gán '${variable}' vào Ngôi nhà số ${value + 1}. Việc gán này hiện tại không vi phạm bất kỳ ràng buộc nào đã biết với các biến đã được gán trước đó.`
           });
 
           if (options.forwardChecking) {
@@ -261,7 +315,9 @@ export class CSPSolver {
                 variable,
                 value,
                 message: `Forward checking successful after assigning ${variable}.`,
-                domains: this.snapshotDomains(newDomains)
+                domains: this.snapshotDomains(newDomains),
+                remainingDomains: JSON.stringify(this.snapshotDomains(newDomains)),
+                explanation: `Forward Checking (Kiểm tra tiến): Sau khi gán '${variable}' = ${value + 1}, hệ thống duyệt qua các biến chưa gán và loại bỏ các lựa chọn không còn hợp lệ. Không có biến nào bị rỗng miền giá trị, tiếp tục nhánh này.`
               });
 
               const result = backtrack(assignment, newDomains);
@@ -272,7 +328,9 @@ export class CSPSolver {
                 variable,
                 value,
                 message: `Forward checking failed for ${variable} = ${value + 1}. Domain wiped out.`,
-                domains: this.snapshotDomains(domains)
+                domains: this.snapshotDomains(domains),
+                remainingDomains: JSON.stringify(this.snapshotDomains(domains)),
+                explanation: `Forward Checking thất bại: Việc gán '${variable}' = ${value + 1} đã khiến ít nhất một biến khác không còn bất kỳ ngôi nhà nào hợp lệ để gán (miền giá trị rỗng). Nhánh tìm kiếm này chắc chắn sai, cần quay lui.`
               });
             }
           } else {
@@ -286,8 +344,10 @@ export class CSPSolver {
             type: 'BACKTRACK',
             variable,
             value,
-            message: `Backtracking from ${variable} = ${value + 1}`,
-            domains: this.snapshotDomains(domains)
+            message: `[BACKTRACK] Dead end for ${variable} = House ${value + 1}. Undoing assignment...`,
+            domains: this.snapshotDomains(domains),
+            remainingDomains: JSON.stringify(this.snapshotDomains(domains)),
+            explanation: `Quay lui (Backtrack): Nhánh tìm kiếm với '${variable}' = ${value + 1} đã dẫn đến bế tắc (không thể gán tiếp các biến còn lại). Hệ thống hủy bỏ phép gán này và sẽ thử giá trị tiếp theo hoặc quay lui sâu hơn.`
           });
         }
       }

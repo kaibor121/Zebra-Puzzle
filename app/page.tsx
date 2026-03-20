@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { CheckSquare, Square, ListChecks, X, Eraser, CheckCircle2, AlertCircle, RefreshCw, Trophy, Lightbulb, Play, FastForward, Pause, Settings2, Zap, BarChart } from 'lucide-react';
+import { CheckSquare, Square, ListChecks, X, Eraser, CheckCircle2, AlertCircle, RefreshCw, Trophy, Lightbulb, Play, FastForward, Pause, Settings2, Zap, BarChart, Network, Download } from 'lucide-react';
 import { clsx } from 'clsx';
 import { puzzles, Puzzle, Constraint, Category } from '@/lib/puzzles';
 import { CSPSolver, Step, SolverOptions } from '@/lib/csp';
@@ -116,12 +116,86 @@ export default function ZebraPuzzle() {
   const [benchmarkStats, setBenchmarkStats] = useState<{ timeMs: number, steps: number, backtracks: number } | null>(null);
   const [benchmarkResults, setBenchmarkResults] = useState<BenchmarkResult[] | null>(null);
   const [isBenchmarking, setIsBenchmarking] = useState(false);
+  const [backtrackCell, setBacktrackCell] = useState<{house: number, category: string, value: string} | null>(null);
   const [solverOptions, setSolverOptions] = useState<SolverOptions>({
     forwardChecking: true,
     mrv: true,
     degree: true,
     lcv: true
   });
+
+  const treeContainerRef = useRef<HTMLDivElement>(null);
+
+  const treeSteps = useMemo(() => {
+    let currentDepth = 0;
+    return aiSteps.slice(0, currentStepIndex).map((step, index) => {
+      let depth = currentDepth;
+      if (step.type === 'BACKTRACK') {
+        currentDepth = Math.max(0, currentDepth - 1);
+        depth = currentDepth;
+      }
+      const node = { ...step, depth, index };
+      if (step.type === 'ASSIGN') {
+        currentDepth++;
+      }
+      return node;
+    });
+  }, [aiSteps, currentStepIndex]);
+
+  useEffect(() => {
+    if (treeContainerRef.current) {
+      treeContainerRef.current.scrollTop = treeContainerRef.current.scrollHeight;
+    }
+  }, [currentStepIndex]);
+
+  const exportTreeToCSV = () => {
+    if (treeSteps.length === 0) return;
+
+    const headers = [
+      'Step', 
+      'Depth', 
+      'Action Type', 
+      'Variable', 
+      'House', 
+      'Degree',
+      'Message', 
+      'Detailed Explanation',
+      'Remaining Domains'
+    ];
+    
+    const rows = treeSteps.map(step => {
+      const type = step.type;
+      const variable = step.variable || '';
+      const house = step.value !== undefined ? step.value + 1 : '';
+      const degree = step.degree !== undefined ? step.degree : '';
+      const message = `"${step.message.replace(/"/g, '""')}"`;
+      const explanation = step.explanation ? `"${step.explanation.replace(/"/g, '""')}"` : '';
+      const remainingDomains = step.remainingDomains ? `"${step.remainingDomains.replace(/"/g, '""')}"` : '';
+      
+      return [
+        step.index + 1, 
+        step.depth, 
+        type, 
+        variable, 
+        house, 
+        degree,
+        message, 
+        explanation,
+        remainingDomains
+      ].join(',');
+    });
+
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    // Add BOM for Excel UTF-8 compatibility
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${currentPuzzle.id}-ai-search-tree.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const loadPuzzle = (puzzle: Puzzle) => {
     setCurrentPuzzle(puzzle);
@@ -135,6 +209,7 @@ export default function ZebraPuzzle() {
     setCurrentStepIndex(0);
     setDomains({});
     setBenchmarkStats(null);
+    setBacktrackCell(null);
   };
 
   const toggleClue = (index: number) => {
@@ -247,6 +322,7 @@ export default function ZebraPuzzle() {
     setGridState({});
     setCrossedClues(new Set());
     setBenchmarkStats(null);
+    setBacktrackCell(null);
     
     // Small delay to allow state to clear before heavy computation
     setTimeout(() => {
@@ -257,7 +333,7 @@ export default function ZebraPuzzle() {
       
       setBenchmarkStats({
         timeMs: endTime - startTime,
-        steps: steps.length,
+        steps: steps.filter(s => s.type === 'ASSIGN').length,
         backtracks: steps.filter(s => s.type === 'BACKTRACK').length
       });
 
@@ -274,6 +350,7 @@ export default function ZebraPuzzle() {
     setIsAISolving(false);
     setDomains({});
     setBenchmarkStats(null);
+    setBacktrackCell(null);
     
     setTimeout(() => {
       const solver = new CSPSolver(currentPuzzle);
@@ -283,7 +360,7 @@ export default function ZebraPuzzle() {
       
       setBenchmarkStats({
         timeMs: endTime - startTime,
-        steps: steps.length,
+        steps: steps.filter(s => s.type === 'ASSIGN').length,
         backtracks: steps.filter(s => s.type === 'BACKTRACK').length
       });
       
@@ -314,6 +391,7 @@ export default function ZebraPuzzle() {
 
   const stopAISolve = () => {
     setIsAISolving(false);
+    setBacktrackCell(null);
     setHintMessage("AI Solver stopped.");
     if (hintTimeout) clearTimeout(hintTimeout);
     setHintTimeout(setTimeout(() => setHintMessage(null), 3000));
@@ -356,7 +434,7 @@ export default function ZebraPuzzle() {
         name: combo.name,
         options: combo.options,
         timeMs: endTime - startTime,
-        steps: steps.length,
+        steps: steps.filter(s => s.type === 'ASSIGN').length,
         backtracks: steps.filter(s => s.type === 'BACKTRACK').length
       });
       
@@ -385,6 +463,7 @@ export default function ZebraPuzzle() {
       }
 
       if (step.type === 'ASSIGN' && step.variable && step.value !== undefined) {
+        setBacktrackCell(null);
         setGridState(prev => {
           const category = currentPuzzle.categories.find(c => c.options.includes(step.variable!))?.name;
           if (!category) return prev;
@@ -400,6 +479,9 @@ export default function ZebraPuzzle() {
         setGridState(prev => {
           const category = currentPuzzle.categories.find(c => c.options.includes(step.variable!))?.name;
           if (!category) return prev;
+          
+          setBacktrackCell({ house: step.value!, category, value: step.variable! });
+          
           const newState = { ...prev };
           if (newState[step.value!]) {
             const newHouse = { ...newState[step.value!] };
@@ -410,7 +492,20 @@ export default function ZebraPuzzle() {
         });
       }
 
-      setHintMessage(`[${step.type}] ${step.message}`);
+      if (step.type === 'REASONING') {
+        setHintMessage(`🤔 ${step.message}`);
+      } else if (step.type === 'ASSIGN') {
+        setHintMessage(`✍️ ${step.message}`);
+      } else if (step.type === 'BACKTRACK') {
+        setHintMessage(`⏪ ${step.message}`);
+      } else if (step.type === 'FORWARD_CHECK') {
+        setHintMessage(`👀 ${step.message}`);
+      } else if (step.type === 'FAIL') {
+        setHintMessage(`❌ ${step.message}`);
+      } else {
+        setHintMessage(`[${step.type}] ${step.message}`);
+      }
+      
       setCurrentStepIndex(prev => prev + 1);
     }, aiSpeed);
 
@@ -447,7 +542,7 @@ export default function ZebraPuzzle() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 grid grid-cols-1 xl:grid-cols-3 gap-8">
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-8 grid grid-cols-1 xl:grid-cols-3 gap-8">
         {/* Left Column: Grid & Status */}
         <div className="xl:col-span-2 space-y-6">
           
@@ -575,6 +670,7 @@ export default function ZebraPuzzle() {
                     setIsAISolving(false);
                     setDomains({});
                     setBenchmarkStats(null);
+                    setBacktrackCell(null);
                   }}
                   className="p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-xl transition-colors"
                   title="Reset Puzzle"
@@ -639,7 +735,7 @@ export default function ZebraPuzzle() {
                     {benchmarkStats && !isAISolving && (
                       <span title="Computation time">⏱ {benchmarkStats.timeMs.toFixed(2)}ms</span>
                     )}
-                    <span title="Total steps">👣 {isAISolving ? `${currentStepIndex} / ${aiSteps.length}` : benchmarkStats?.steps} steps</span>
+                    <span title="Total assignments">✍️ {isAISolving ? `${aiSteps.slice(0, currentStepIndex).filter(s => s.type === 'ASSIGN').length} / ${benchmarkStats?.steps}` : benchmarkStats?.steps} assignments</span>
                     <span title="Backtracks" className="font-semibold text-red-600">
                       ↩️ {isAISolving ? aiSteps.slice(0, currentStepIndex).filter(s => s.type === 'BACKTRACK').length : benchmarkStats?.backtracks} backtracks
                     </span>
@@ -680,10 +776,11 @@ export default function ZebraPuzzle() {
                       {Array.from({length: currentPuzzle.houses}).map((_, i) => {
                         const val = gridState[i]?.[cat.name];
                         const isActive = activeCell?.house === i && activeCell?.category === cat.name;
+                        const isBacktracking = backtrackCell?.house === i && backtrackCell?.category === cat.name;
                         
                         // Calculate domain for this cell if AI is solving
                         let domainOptions: string[] = [];
-                        if (isAISolving && !val) {
+                        if (isAISolving && !val && !isBacktracking) {
                           domainOptions = cat.options.filter(opt => domains[opt]?.includes(i));
                         }
 
@@ -694,14 +791,21 @@ export default function ZebraPuzzle() {
                               onClick={() => setActiveCell({ house: i, category: cat.name })}
                               className={clsx(
                                 "w-full h-full rounded-xl border-2 flex items-center justify-center text-sm font-medium transition-all",
-                                val 
-                                  ? "bg-indigo-50 border-indigo-200 text-indigo-700 hover:border-indigo-300" 
-                                  : "bg-white border-stone-200 text-stone-400 hover:border-indigo-300 hover:bg-stone-50",
-                                isActive && "ring-4 ring-indigo-100 border-indigo-500 bg-indigo-50",
-                                isAISolving && !val && "cursor-default"
+                                isBacktracking
+                                  ? "bg-red-50 border-red-300 text-red-700 ring-4 ring-red-100"
+                                  : val 
+                                    ? "bg-indigo-50 border-indigo-200 text-indigo-700 hover:border-indigo-300" 
+                                    : "bg-white border-stone-200 text-stone-400 hover:border-indigo-300 hover:bg-stone-50",
+                                isActive && !isBacktracking && "ring-4 ring-indigo-100 border-indigo-500 bg-indigo-50",
+                                isAISolving && !val && !isBacktracking && "cursor-default"
                               )}
                             >
-                              {val ? val : (
+                              {isBacktracking ? (
+                                <div className="flex flex-col items-center justify-center leading-none">
+                                  <span className="line-through opacity-70 text-xs">{backtrackCell.value}</span>
+                                  <span className="text-[9px] font-bold uppercase tracking-wider mt-1 text-red-600">Backtrack</span>
+                                </div>
+                              ) : val ? val : (
                                 isAISolving && domainOptions.length > 0 ? (
                                   <div className="flex flex-wrap justify-center gap-0.5 px-1 opacity-40 text-[9px] leading-tight max-h-full overflow-hidden">
                                     {domainOptions.map(opt => (
@@ -773,6 +877,78 @@ export default function ZebraPuzzle() {
                 )
               })}
             </ul>
+          </div>
+        </div>
+
+        {/* Search Tree Panel */}
+        <div className="xl:col-span-1 flex flex-col bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[600px] xl:h-[calc(100vh-6rem)] xl:sticky xl:top-24">
+          <div className="p-4 border-b border-stone-100 bg-stone-50 flex items-center justify-between">
+            <h2 className="font-bold text-stone-800 flex items-center gap-2">
+              <Network className="w-5 h-5 text-indigo-600" />
+              AI Search Tree
+            </h2>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={exportTreeToCSV}
+                disabled={treeSteps.length === 0}
+                className="flex items-center gap-1.5 text-xs font-medium text-stone-600 bg-white border border-stone-200 px-2.5 py-1.5 rounded-md hover:bg-stone-50 hover:text-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+                title="Export to CSV (Excel)"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export
+              </button>
+              <div className="text-xs font-medium text-stone-500 bg-stone-200 px-2 py-1.5 rounded-md">
+                Depth: {treeSteps.length > 0 ? treeSteps[treeSteps.length - 1].depth : 0}
+              </div>
+            </div>
+          </div>
+          <div 
+            ref={treeContainerRef}
+            className="flex-1 overflow-y-auto p-4 space-y-1.5 font-mono text-[11px] sm:text-xs bg-[#fafafa]"
+          >
+            {treeSteps.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-stone-400 space-y-2">
+                <Network className="w-8 h-8 opacity-20" />
+                <p>Start AI Solve to view the search tree</p>
+              </div>
+            ) : (
+              <>
+                {treeSteps.length > 200 && (
+                  <div className="text-center text-stone-400 italic py-2 border-b border-stone-200 mb-2">
+                    ... showing last 200 steps ...
+                  </div>
+                )}
+                {treeSteps.slice(-200).map((step) => (
+                  <div 
+                    key={step.index} 
+                    className="flex items-start gap-2 animate-in fade-in slide-in-from-left-2 duration-200"
+                    style={{ paddingLeft: `${step.depth * 12}px` }}
+                  >
+                    <div className="mt-0.5 shrink-0">
+                      {step.type === 'ASSIGN' && <span className="text-emerald-500">●</span>}
+                      {step.type === 'BACKTRACK' && <span className="text-red-500">○</span>}
+                      {step.type === 'REASONING' && <span className="text-indigo-400">↳</span>}
+                      {step.type === 'FAIL' && <span className="text-red-500">×</span>}
+                      {step.type === 'FORWARD_CHECK' && <span className="text-amber-500">👁</span>}
+                      {step.type === 'SUCCESS' && <span className="text-emerald-500">★</span>}
+                      {step.type === 'DOMAIN_REDUCE' && <span className="text-stone-400">✂</span>}
+                    </div>
+                    <div className={clsx(
+                      "flex-1 py-1 px-2 rounded-md border",
+                      step.type === 'ASSIGN' && "bg-emerald-50 border-emerald-100 text-emerald-800",
+                      step.type === 'BACKTRACK' && "bg-red-50 border-red-100 text-red-800",
+                      step.type === 'REASONING' && "bg-white border-stone-100 text-stone-500",
+                      step.type === 'FAIL' && "bg-white border-red-100 text-red-600",
+                      step.type === 'FORWARD_CHECK' && "bg-white border-amber-100 text-amber-700",
+                      step.type === 'SUCCESS' && "bg-emerald-500 border-emerald-600 text-white font-bold",
+                      step.type === 'DOMAIN_REDUCE' && "bg-white border-stone-100 text-stone-400"
+                    )}>
+                      {step.message}
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </div>
       </main>
@@ -889,7 +1065,7 @@ export default function ZebraPuzzle() {
                     <tr className="border-b-2 border-stone-200">
                       <th className="p-3 font-bold text-stone-700">Algorithm Combination</th>
                       <th className="p-3 font-bold text-stone-700 text-right">Time (ms)</th>
-                      <th className="p-3 font-bold text-stone-700 text-right">Total Steps</th>
+                      <th className="p-3 font-bold text-stone-700 text-right">Assignments</th>
                       <th className="p-3 font-bold text-stone-700 text-right">Backtracks</th>
                     </tr>
                   </thead>
